@@ -18,10 +18,10 @@
         #stream-area { flex: 1; display: flex; flex-direction: column; min-width: 0; height: 100%; position: relative; }
         #main-stream { width: 100%; background: #000; }
         #main-stream iframe { width: 100%; height: 100%; border: none; }
-        #sub-streams { display: flex; width: 100%; background: #000; }
-        #sub-streams .sub-slot { flex: 1; position: relative; min-width: 0; }
+        #sub-streams { display: flex; flex-wrap: wrap; align-items: center; align-content: center; justify-content: center; flex: 1; width: 100%; background: #000; min-height: 0; }
+        #sub-streams .sub-slot { position: relative; flex-grow: 0; }
         #sub-streams .sub-slot iframe { width: 100%; height: 100%; border: none; display: block; }
-        #sub-streams .sub-slot .sub-overlay { position: absolute; inset: 0; cursor: pointer; z-index: 2; opacity: 0; transition: opacity 0.15s; }
+        #sub-streams .sub-slot .sub-overlay { position: absolute; inset: 0; z-index: 2; opacity: 0; transition: opacity 0.15s; }
         #sub-streams .sub-slot:hover .sub-overlay { opacity: 1; }
         #sub-streams .sub-slot .sub-overlay .sub-controls { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; }
         #sub-streams .sub-slot .sub-overlay .sub-controls button { background: rgba(0,0,0,0.7); border-radius: 4px; padding: 4px 6px; font-size: 12px; color: #fff; }
@@ -207,24 +207,13 @@
     </div>
 
     <script>
-        // Extension detection
-        // Mul.Live Plus 확장 프로그램은 페이지 DOM에 속성을 주입하거나
-        // content script를 통해 동작함. 감지 방법:
-        // 1) 확장 프로그램이 html 요소에 'mullive' 속성 추가
-        // 2) 또는 window에 특정 변수 주입
-        let hasExtension = document.documentElement.hasAttribute('mullive');
+        // 원본(mul.live)과 동일하게 hasExtension = true 고정
+        // 확장 프로그램은 iframe 내부(play.sooplive.com, chzzk.naver.com)에
+        // content script를 주입하여 동작하므로 부모 페이지에서는 항상 true로 설정
+        const hasExtension = true;
         const extensionUrl = /firefox/i.test(navigator.userAgent)
             ? 'https://addons.mozilla.org/addon/mullive/'
             : 'https://chromewebstore.google.com/detail/pahcphmhihleneomklgfbbneokhjiaim';
-
-        // 확장 프로그램이 늦게 로드될 수 있으므로 재감지
-        setTimeout(() => {
-            if (!hasExtension && document.documentElement.hasAttribute('mullive')) {
-                hasExtension = true;
-                document.getElementById('chat-notice').textContent = '확장 프로그램 감지됨';
-                document.getElementById('ext-overlay').style.display = 'none';
-            }
-        }, 1500);
 
         function closeExtOverlay() {
             document.getElementById('ext-overlay').style.display = 'none';
@@ -251,8 +240,8 @@
             closeExtOverlay();
         }
 
-        // Show extension notice on first visit if no extension
-        if (!hasExtension && localStorage.getItem('multiview_seen_ext') !== 'true') {
+        // 확장 프로그램 안내는 첫 방문 시에만 표시
+        if (localStorage.getItem('multiview_seen_ext') !== 'true') {
             document.getElementById('ext-overlay').style.display = 'flex';
         }
 
@@ -264,10 +253,6 @@
             }
         });
 
-        // Update notice based on extension
-        if (hasExtension) {
-            document.getElementById('chat-notice').textContent = '확장 프로그램 감지됨';
-        }
 
         // State
         let initChat = true; // 원본과 동일: 첫 PonReady 때 채팅 로드
@@ -451,7 +436,7 @@
             promoteToMain(fromIdx);
         }
 
-        // Layout
+        // Layout — 원본(mul.live) 최적 그리드 알고리즘 적용
         function adjustLayout() {
             const mainEl = document.getElementById('main-stream');
             const subEl = document.getElementById('sub-streams');
@@ -464,7 +449,7 @@
             const subCount = channels.length - 1;
 
             if (subCount === 0) {
-                // Single channel: full screen
+                // 채널 1개: 풀스크린
                 mainEl.style.height = totalH + 'px';
                 subEl.style.display = 'none';
                 return;
@@ -472,15 +457,38 @@
 
             subEl.style.display = 'flex';
 
-            // Calculate optimal split
-            const subW = totalW / subCount;
-            const subH = subW * 9 / 16;
-            const maxSubH = totalH * 0.35;
-            const actualSubH = Math.min(subH, maxSubH);
-            const mainH = totalH - actualSubH;
+            // 메인: 가로 풀사이즈, 16:9 비율로 최소 높이
+            const mainH = Math.floor(totalW * 9 / 16);
+            // 메인이 전체의 60% 넘지 않도록 제한
+            const clampedMainH = Math.min(mainH, Math.floor(totalH * 0.6));
+            mainEl.style.height = clampedMainH + 'px';
 
-            mainEl.style.height = mainH + 'px';
-            subEl.style.height = actualSubH + 'px';
+            // 서브: 남은 공간에서 원본 알고리즘으로 최적 배치
+            const subAreaW = totalW - 8;
+            const subAreaH = totalH - clampedMainH - 8;
+            const n = subCount;
+
+            let bestW = 0, bestH = 0;
+            for (let cols = 1; cols <= n; cols++) {
+                const rows = Math.ceil(n / cols);
+                let maxW = Math.floor(subAreaW / cols);
+                let maxH = Math.floor(subAreaH / rows);
+                if ((maxW * 9) / 16 < maxH) {
+                    maxH = Math.floor((maxW * 9) / 16);
+                } else {
+                    maxW = Math.floor((maxH * 16) / 9);
+                }
+                if (maxW > bestW) {
+                    bestW = maxW;
+                    bestH = maxH;
+                }
+            }
+
+            const slots = subEl.querySelectorAll('.sub-slot');
+            slots.forEach(s => {
+                s.style.width = bestW + 'px';
+                s.style.height = bestH + 'px';
+            });
         }
 
         // Render
@@ -531,7 +539,7 @@
                     slot.draggable = true;
                     slot.innerHTML = `
                         <iframe src="${getStreamUrl(ch.id, ch.platform)}" name="${ch.id}" allowfullscreen data-id="${ch.id}"></iframe>
-                        <div class="sub-overlay" onclick="promoteToMain(${globalIdx})">
+                        <div class="sub-overlay" ondblclick="promoteToMain(${globalIdx})">
                             <div class="sub-controls">
                                 <button onclick="event.stopPropagation(); removeChannel(${globalIdx})" title="제거">✕</button>
                             </div>
