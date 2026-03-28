@@ -51,8 +51,13 @@
         .platform-badge.chzzk { background: #00e676; color: #000; }
 
         /* Sidebar */
-        #sidebar { width: 350px; height: 100%; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--border); flex-shrink: 0; transition: width 0.2s, opacity 0.2s; overflow: hidden; }
+        #sidebar { width: 350px; height: 100%; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--border); flex-shrink: 0; overflow: hidden; position: relative; }
         #sidebar.collapsed { width: 0; border-left: none; }
+        #sidebar.resizing { transition: none; }
+
+        /* Resize handle */
+        #sidebar-resize { position: absolute; left: -3px; top: 0; width: 6px; height: 100%; cursor: col-resize; z-index: 10; }
+        #sidebar-resize:hover, #sidebar-resize.active { background: var(--accent); opacity: 0.6; }
 
         /* Sidebar toggle */
         #sidebar-toggle { position: fixed; top: 8px; right: 8px; z-index: 100; background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; font-size: 18px; line-height: 1; transition: opacity 0.15s; }
@@ -159,6 +164,7 @@
 
         <!-- Sidebar -->
         <div id="sidebar">
+            <div id="sidebar-resize"></div>
             <div id="panel-toggle-row">
                 <span>채널 관리</span>
                 <button onclick="togglePanel()" id="panel-toggle-btn">▲</button>
@@ -503,7 +509,7 @@
 
             if (!channels.length) return;
 
-            const sidebarW = sidebarOpen ? 350 : 0;
+            const sidebarW = sidebarOpen ? document.getElementById('sidebar').offsetWidth : 0;
             const totalW = window.innerWidth - sidebarW;
             const totalH = window.innerHeight;
             const subCount = channels.length - 1;
@@ -767,8 +773,50 @@
             }
         });
 
-        // Resize
+        // Window resize
         window.addEventListener('resize', adjustLayout);
+
+        // Sidebar drag resize
+        (() => {
+            const handle = document.getElementById('sidebar-resize');
+            const sidebar = document.getElementById('sidebar');
+            let startX, startW;
+
+            handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                startX = e.clientX;
+                startW = sidebar.offsetWidth;
+                sidebar.classList.add('resizing');
+                handle.classList.add('active');
+
+                // iframe 위에서 드래그 시 이벤트가 씹히지 않도록 오버레이
+                const cover = document.createElement('div');
+                cover.id = 'drag-cover';
+                cover.style.cssText = 'position:fixed;inset:0;z-index:9999;cursor:col-resize;';
+                document.body.appendChild(cover);
+
+                const onMove = (e) => {
+                    const newW = Math.max(200, Math.min(600, startW + (startX - e.clientX)));
+                    sidebar.style.width = newW + 'px';
+                    sidebarOpen = newW > 50;
+                    adjustLayout();
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    sidebar.classList.remove('resizing');
+                    handle.classList.remove('active');
+                    document.getElementById('drag-cover')?.remove();
+                    localStorage.setItem('multiview_sidebar_w', sidebar.offsetWidth);
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+
+            // 저장된 너비 복원
+            const savedW = localStorage.getItem('multiview_sidebar_w');
+            if (savedW) sidebar.style.width = savedW + 'px';
+        })();
 
         // Enter key on inputs
         document.getElementById('top-input').addEventListener('keydown', (e) => {
