@@ -21,11 +21,11 @@
         #sub-streams { display: flex; flex-wrap: wrap; align-items: center; align-content: center; justify-content: center; flex: 1; width: 100%; background: #000; min-height: 0; }
         #sub-streams .sub-slot { position: relative; flex-grow: 0; }
         #sub-streams .sub-slot iframe { width: 100%; height: 100%; border: none; display: block; }
-        #sub-streams .sub-slot .sub-overlay { position: absolute; inset: 0; z-index: 2; opacity: 0; transition: opacity 0.15s; }
-        #sub-streams .sub-slot:hover .sub-overlay { opacity: 1; }
-        #sub-streams .sub-slot .sub-overlay .sub-controls { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; }
-        #sub-streams .sub-slot .sub-overlay .sub-controls button { background: rgba(0,0,0,0.7); border-radius: 4px; padding: 4px 6px; font-size: 12px; color: #fff; }
-        #sub-streams .sub-slot .sub-overlay .sub-controls button:hover { background: var(--accent); }
+        #sub-streams .sub-slot .sub-toolbar { position: absolute; top: 0; left: 0; right: 0; z-index: 2; display: flex; align-items: center; gap: 4px; padding: 4px 6px; background: linear-gradient(180deg, rgba(0,0,0,0.75) 0%, transparent 100%); opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+        #sub-streams .sub-slot:hover .sub-toolbar { opacity: 1; pointer-events: auto; }
+        #sub-streams .sub-slot .sub-toolbar .sub-label { flex: 1; font-size: 11px; color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: grab; padding: 2px 4px; }
+        #sub-streams .sub-slot .sub-toolbar button { background: rgba(0,0,0,0.6); border-radius: 4px; padding: 3px 7px; font-size: 11px; color: #fff; flex-shrink: 0; }
+        #sub-streams .sub-slot .sub-toolbar button:hover { background: var(--accent); }
         #sub-streams .sub-slot.drag-over { outline: 2px solid var(--accent); outline-offset: -2px; }
         #sub-streams .sub-slot.dragging { opacity: 0.4; }
         #main-stream.drag-over { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -60,7 +60,7 @@
         #sidebar.collapsed ~ #sidebar-toggle { right: 8px; }
 
         /* Channel management panel */
-        #channel-panel { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); max-height: 50%; overflow-y: auto; flex-shrink: 0; }
+        #channel-panel { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); max-height: 40%; overflow-y: auto; flex-shrink: 0; }
         #channel-panel.collapsed-panel { display: none; }
         #panel-toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
         #panel-toggle-row span { font-size: 12px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -97,10 +97,10 @@
         .reset-btn:hover { background: #f44; color: #fff; }
 
         /* Chat */
-        #chat-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+        #chat-section { flex: 1; display: flex; flex-direction: column; min-height: 300px; }
         #chat-select { margin: 4px 8px; padding: 6px 8px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; outline: none; flex-shrink: 0; }
         #chat-select:focus { border-color: var(--accent); }
-        #chat-frame { flex: 1; width: 100%; border: none; min-height: 0; }
+        #chat-frame { flex: 1; width: 100%; border: none; min-height: 200px; }
 
         /* Top control bar (hover reveal) */
         #top-bar { position: absolute; top: 0; left: 0; right: 0; z-index: 50; background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%); padding: 8px 12px; display: flex; align-items: center; gap: 8px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
@@ -285,6 +285,49 @@
             return str.split(/[\s,\/]+/).map(s => s.trim()).filter(Boolean);
         }
 
+        // 닉네임 가져오기
+        async function fetchNickname(id, platform) {
+            try {
+                if (platform === 'chzzk') {
+                    const res = await fetch(`https://api.chzzk.naver.com/service/v1/channels/${id}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        return data.content?.channelName || null;
+                    }
+                } else {
+                    // 숲: station API로 닉네임 조회
+                    const res = await fetch(`https://chapi.sooplive.com/api/${id}/station`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        return data.station?.user_nick || null;
+                    }
+                }
+            } catch (e) {
+                // CORS 등으로 실패하면 무시 (숲은 postMessage로 대체됨)
+            }
+            return null;
+        }
+
+        function updateNickname(id, nickname) {
+            const ch = channels.find(c => c.id === id);
+            if (ch && nickname && ch.nickname !== nickname) {
+                ch.nickname = nickname;
+                const fav = favorites.find(f => f.id === id);
+                if (fav) {
+                    fav.nickname = nickname;
+                    localStorage.setItem('multiview_favorites', JSON.stringify(favorites));
+                }
+                renderSidebar();
+                updateChatSelect();
+                // 서브 툴바 라벨도 업데이트
+                const slot = document.querySelector(`.sub-slot[data-id="${id}"]`);
+                if (slot) {
+                    const label = slot.querySelector('.sub-label');
+                    if (label) label.textContent = nickname;
+                }
+            }
+        }
+
         // Add channels
         function addChannels(ids) {
             let added = false;
@@ -293,6 +336,10 @@
                 const platform = detectPlatform(id);
                 channels.push({ id, platform, nickname: id });
                 added = true;
+                // 닉네임 비동기 조회
+                fetchNickname(id, platform).then(nick => {
+                    if (nick) updateNickname(id, nick);
+                });
             }
             if (added) render();
         }
@@ -536,27 +583,29 @@
                     slot.className = 'sub-slot';
                     slot.setAttribute('data-id', ch.id);
                     slot.setAttribute('data-idx', globalIdx);
-                    slot.draggable = true;
                     slot.innerHTML = `
                         <iframe src="${getStreamUrl(ch.id, ch.platform)}" name="${ch.id}" allowfullscreen data-id="${ch.id}"></iframe>
-                        <div class="sub-overlay" ondblclick="promoteToMain(${globalIdx})">
-                            <div class="sub-controls">
-                                <button onclick="event.stopPropagation(); removeChannel(${globalIdx})" title="제거">✕</button>
-                            </div>
+                        <div class="sub-toolbar">
+                            <span class="sub-label" draggable="true" data-idx="${globalIdx}">${ch.nickname}</span>
+                            <button onclick="promoteToMain(${globalIdx})" title="메인으로">&#9650;</button>
+                            <button onclick="removeChannel(${globalIdx})" title="제거">✕</button>
                         </div>
                     `;
 
-                    // Drag events
-                    slot.addEventListener('dragstart', (e) => {
+                    // Drag: 라벨을 드래그 핸들로 사용
+                    const label = slot.querySelector('.sub-label');
+                    label.addEventListener('dragstart', (e) => {
                         dragIdx = globalIdx;
                         e.dataTransfer.setData('text/plain', String(globalIdx));
                         e.dataTransfer.effectAllowed = 'move';
                         setTimeout(() => slot.classList.add('dragging'), 0);
                     });
-                    slot.addEventListener('dragend', () => {
+                    label.addEventListener('dragend', () => {
                         slot.classList.remove('dragging');
                         dragIdx = -1;
                     });
+
+                    // Drop: 슬롯 전체에서 받기
                     slot.addEventListener('dragover', (e) => {
                         e.preventDefault();
                         slot.classList.add('drag-over');
@@ -678,17 +727,8 @@
                     }, 'https://play.sooplive.com');
                     break;
                 case 'PupdateBroadInfo':
-                    const ch = channels.find(c => c.id === id);
-                    if (ch && e.data.data?.nick) {
-                        ch.nickname = e.data.data.nick;
-                        // Update favorite nickname too
-                        const fav = favorites.find(f => f.id === id);
-                        if (fav) {
-                            fav.nickname = e.data.data.nick;
-                            localStorage.setItem('multiview_favorites', JSON.stringify(favorites));
-                        }
-                        renderSidebar();
-                        updateChatSelect();
+                    if (e.data.data?.nick) {
+                        updateNickname(id, e.data.data.nick);
                     }
                     break;
                 case 'showRefreshOverlay':
