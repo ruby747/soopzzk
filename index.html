@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="여러 숲(SOOP), 치지직 방송을 함께 볼 수 있는 멀티뷰">
+    <title>멀티뷰</title>
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root { color-scheme: dark; --accent: #7c5cfc; --bg: #000; --panel: #111; --card: #1a1a1a; --border: #333; --text: #e0e0e0; --text-dim: #888; }
+        html, body { width: 100%; height: 100%; font-family: 'Pretendard', -apple-system, sans-serif; color: var(--text); background: var(--bg); overflow: hidden; }
+        button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+        input, select { font-family: inherit; color: inherit; }
+
+        /* Layout */
+        .app { display: flex; width: 100%; height: 100%; }
+        #stream-area { flex: 1; display: flex; flex-direction: column; min-width: 0; height: 100%; position: relative; }
+        #main-stream { width: 100%; background: #000; }
+        #main-stream iframe { width: 100%; height: 100%; border: none; }
+        #sub-streams { display: flex; width: 100%; background: #000; }
+        #sub-streams .sub-slot { flex: 1; position: relative; min-width: 0; }
+        #sub-streams .sub-slot iframe { width: 100%; height: 100%; border: none; display: block; }
+        #sub-streams .sub-slot .sub-overlay { position: absolute; inset: 0; cursor: pointer; z-index: 2; opacity: 0; transition: opacity 0.15s; }
+        #sub-streams .sub-slot:hover .sub-overlay { opacity: 1; }
+        #sub-streams .sub-slot .sub-overlay .sub-controls { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; }
+        #sub-streams .sub-slot .sub-overlay .sub-controls button { background: rgba(0,0,0,0.7); border-radius: 4px; padding: 4px 6px; font-size: 12px; color: #fff; }
+        #sub-streams .sub-slot .sub-overlay .sub-controls button:hover { background: var(--accent); }
+        #sub-streams .sub-slot.drag-over { outline: 2px solid var(--accent); outline-offset: -2px; }
+        #sub-streams .sub-slot.dragging { opacity: 0.4; }
+        #main-stream.drag-over { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+        /* Empty state */
+        #empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 24px; padding: 40px; }
+        #empty-state h1 { font-size: 28px; font-weight: 700; color: var(--text); }
+        #empty-state p { color: var(--text-dim); font-size: 14px; }
+        #empty-state .empty-input-row { display: flex; gap: 8px; width: 100%; max-width: 500px; }
+        #empty-state .empty-input-row input { flex: 1; padding: 10px 14px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; font-size: 14px; outline: none; }
+        #empty-state .empty-input-row input:focus { border-color: var(--accent); }
+        #empty-state .empty-input-row button { padding: 10px 20px; background: var(--accent); border-radius: 4px; font-size: 14px; font-weight: 600; color: #fff; white-space: nowrap; }
+        #empty-state .empty-input-row button:hover { filter: brightness(1.15); }
+        #empty-section { margin-top: 16px; width: 100%; max-width: 500px; }
+        #empty-section h3 { font-size: 13px; color: var(--text-dim); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+        #empty-section .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        #empty-section .tag { padding: 6px 12px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+        #empty-section .tag:hover { border-color: var(--accent); background: #222; }
+        #empty-section .tag .tag-remove { font-size: 11px; color: var(--text-dim); margin-left: 4px; }
+        #empty-section .tag .tag-remove:hover { color: #f44; }
+        .platform-badge { font-size: 10px; padding: 1px 4px; border-radius: 2px; font-weight: 600; margin-left: 2px; }
+        .platform-badge.soop { background: #1a6aff; color: #fff; }
+        .platform-badge.chzzk { background: #00e676; color: #000; }
+
+        /* Sidebar */
+        #sidebar { width: 350px; height: 100%; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--border); flex-shrink: 0; transition: width 0.2s, opacity 0.2s; overflow: hidden; }
+        #sidebar.collapsed { width: 0; border-left: none; }
+
+        /* Sidebar toggle */
+        #sidebar-toggle { position: fixed; top: 8px; right: 8px; z-index: 100; background: var(--card); border: 1px solid var(--border); border-radius: 4px; padding: 6px 8px; font-size: 18px; line-height: 1; transition: opacity 0.15s; }
+        #sidebar-toggle:hover { background: #444; }
+        #sidebar.collapsed ~ #sidebar-toggle { right: 8px; }
+
+        /* Channel management panel */
+        #channel-panel { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); max-height: 50%; overflow-y: auto; flex-shrink: 0; }
+        #channel-panel.collapsed-panel { display: none; }
+        #panel-toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+        #panel-toggle-row span { font-size: 12px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+        #panel-toggle-row button { font-size: 14px; color: var(--text-dim); padding: 2px 6px; border-radius: 4px; }
+        #panel-toggle-row button:hover { background: #333; color: var(--text); }
+
+        .input-row { display: flex; gap: 4px; }
+        .input-row input { flex: 1; padding: 6px 10px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; outline: none; min-width: 0; }
+        .input-row input:focus { border-color: var(--accent); }
+        .input-row button { padding: 6px 12px; background: var(--accent); border-radius: 4px; font-size: 13px; font-weight: 600; color: #fff; white-space: nowrap; }
+        .input-row button:hover { filter: brightness(1.15); }
+
+        .section-label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+        .channel-list { display: flex; flex-direction: column; gap: 2px; }
+        .channel-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 4px; font-size: 13px; }
+        .channel-item:hover { background: #222; }
+        .channel-item .ch-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .channel-item .ch-star { cursor: pointer; font-size: 14px; color: var(--text-dim); flex-shrink: 0; }
+        .channel-item .ch-star.active { color: #ffd700; }
+        .channel-item .ch-remove { cursor: pointer; font-size: 12px; color: var(--text-dim); padding: 2px 4px; border-radius: 4px; flex-shrink: 0; }
+        .channel-item .ch-remove:hover { background: #f44; color: #fff; }
+        .fav-item { cursor: pointer; }
+        .fav-item:hover { background: #222; }
+        .preset-row { display: flex; gap: 4px; }
+        .preset-row input { flex: 1; min-width: 0; }
+        .preset-row button { flex-shrink: 0; }
+        .preset-item { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 4px; font-size: 13px; cursor: pointer; }
+        .preset-item:hover { background: #222; }
+        .preset-item .preset-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .preset-item .preset-channels { font-size: 11px; color: var(--text-dim); }
+        .preset-item .preset-del { font-size: 12px; color: var(--text-dim); padding: 2px 4px; border-radius: 4px; flex-shrink: 0; }
+        .preset-item .preset-del:hover { background: #f44; color: #fff; }
+        .reset-btn { padding: 4px 8px; background: #333; border-radius: 4px; font-size: 12px; color: var(--text-dim); align-self: flex-start; }
+        .reset-btn:hover { background: #f44; color: #fff; }
+
+        /* Chat */
+        #chat-section { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+        #chat-select { margin: 4px 8px; padding: 6px 8px; background: var(--card); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; outline: none; flex-shrink: 0; }
+        #chat-select:focus { border-color: var(--accent); }
+        #chat-frame { flex: 1; width: 100%; border: none; min-height: 0; }
+
+        /* Top control bar (hover reveal) */
+        #top-bar { position: absolute; top: 0; left: 0; right: 0; z-index: 50; background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%); padding: 8px 12px; display: flex; align-items: center; gap: 8px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+        #stream-area:hover #top-bar, #top-bar:hover { opacity: 1; pointer-events: auto; }
+        #top-bar input { padding: 6px 10px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; font-size: 13px; color: #fff; outline: none; width: 260px; }
+        #top-bar input:focus { border-color: var(--accent); }
+        #top-bar button { padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: 600; }
+        #top-bar .tb-add { background: var(--accent); color: #fff; }
+        #top-bar .tb-add:hover { filter: brightness(1.15); }
+        #top-bar .tb-reset { background: rgba(255,255,255,0.1); color: #ccc; margin-left: auto; }
+        #top-bar .tb-reset:hover { background: #f44; color: #fff; }
+
+        /* Extension overlay */
+        #ext-overlay { display: none; flex-direction: column; position: fixed; bottom: 0; right: 0; width: 350px; border-radius: 8px 8px 0 0; padding: 12px 20px 16px; background: #222; border: 1px solid var(--border); border-bottom: none; font-size: 13px; z-index: 200; line-height: 1.6; }
+        #ext-overlay .ext-close { align-self: flex-end; font-size: 16px; color: var(--text-dim); cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+        #ext-overlay .ext-close:hover { background: #444; color: var(--text); }
+        #ext-overlay .ext-btn { margin-top: 12px; padding: 8px 16px; background: var(--accent); border-radius: 4px; text-align: center; cursor: pointer; font-weight: 600; font-size: 13px; }
+        #ext-overlay .ext-btn:hover { filter: brightness(1.15); }
+        #chat-notice { padding: 4px 8px; font-size: 11px; color: var(--text-dim); text-align: center; flex-shrink: 0; border-top: 1px solid var(--border); }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <div id="stream-area">
+            <!-- Top hover bar -->
+            <div id="top-bar">
+                <input type="text" id="top-input" placeholder="채널 ID 입력 (쉼표/공백으로 여러 개)">
+                <button class="tb-add" onclick="addFromInput('top-input')">추가</button>
+                <button class="tb-reset" onclick="resetAll()">초기화</button>
+            </div>
+
+            <!-- Empty state -->
+            <div id="empty-state">
+                <h1>멀티뷰</h1>
+                <p>숲(SOOP) · 치지직(CHZZK) 방송을 함께 볼 수 있습니다</p>
+                <div class="empty-input-row">
+                    <input type="text" id="empty-input" placeholder="채널 ID 입력 (쉼표/공백으로 여러 개)">
+                    <button onclick="addFromInput('empty-input')">추가</button>
+                </div>
+                <div id="empty-section">
+                    <div id="empty-favs"></div>
+                    <div id="empty-presets" style="margin-top:16px;"></div>
+                </div>
+            </div>
+
+            <!-- Main stream -->
+            <div id="main-stream" style="display:none;"
+                 ondragover="event.preventDefault(); this.classList.add('drag-over')"
+                 ondragleave="this.classList.remove('drag-over')"
+                 ondrop="handleMainDrop(event); this.classList.remove('drag-over')">
+            </div>
+
+            <!-- Sub streams -->
+            <div id="sub-streams" style="display:none;"></div>
+        </div>
+
+        <!-- Sidebar -->
+        <div id="sidebar">
+            <div id="panel-toggle-row">
+                <span>채널 관리</span>
+                <button onclick="togglePanel()" id="panel-toggle-btn">▲</button>
+            </div>
+            <div id="channel-panel">
+                <div class="input-row">
+                    <input type="text" id="sidebar-input" placeholder="채널 ID 입력" onkeydown="if(event.key==='Enter')addFromInput('sidebar-input')">
+                    <button onclick="addFromInput('sidebar-input')">추가</button>
+                </div>
+
+                <div class="section-label">활성 채널</div>
+                <div class="channel-list" id="active-channels"></div>
+
+                <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+                    <span class="section-label" style="margin:0;">즐겨찾기</span>
+                </div>
+                <div class="channel-list" id="fav-list"></div>
+
+                <div class="section-label" style="margin-top:4px;">프리셋</div>
+                <div class="preset-row input-row">
+                    <input type="text" id="preset-name-input" placeholder="프리셋 이름" onkeydown="if(event.key==='Enter')savePreset()">
+                    <button onclick="savePreset()">저장</button>
+                </div>
+                <div class="channel-list" id="preset-list"></div>
+
+                <button class="reset-btn" onclick="resetAll()">전체 초기화</button>
+            </div>
+
+            <div id="chat-section">
+                <select id="chat-select" onchange="switchChat(this.value)">
+                    <option value="about:blank">(채팅 선택)</option>
+                </select>
+                <iframe id="chat-frame" src="about:blank"></iframe>
+                <div id="chat-notice">확장 프로그램 미설치 시 읽기 전용</div>
+            </div>
+        </div>
+
+        <button id="sidebar-toggle" onclick="toggleSidebar()">💬</button>
+    </div>
+
+    <!-- Extension overlay -->
+    <div id="ext-overlay">
+        <span class="ext-close" onclick="closeExtOverlay()">&times;</span>
+        <div id="ext-overlay-text">Mul.Live Plus 확장 프로그램을 설치하면 채팅에서 로그인 기능을 사용할 수 있습니다. 미설치 시 채팅은 읽기 전용입니다.</div>
+        <div class="ext-btn" id="ext-overlay-btn" onclick="handleExtBtn()">확장 프로그램 설치</div>
+    </div>
+
+    <script>
+        // Extension detection
+        // Mul.Live Plus 확장 프로그램은 페이지 DOM에 속성을 주입하거나
+        // content script를 통해 동작함. 감지 방법:
+        // 1) 확장 프로그램이 html 요소에 'mullive' 속성 추가
+        // 2) 또는 window에 특정 변수 주입
+        let hasExtension = document.documentElement.hasAttribute('mullive');
+        const extensionUrl = /firefox/i.test(navigator.userAgent)
+            ? 'https://addons.mozilla.org/addon/mullive/'
+            : 'https://chromewebstore.google.com/detail/pahcphmhihleneomklgfbbneokhjiaim';
+
+        // 확장 프로그램이 늦게 로드될 수 있으므로 재감지
+        setTimeout(() => {
+            if (!hasExtension && document.documentElement.hasAttribute('mullive')) {
+                hasExtension = true;
+                document.getElementById('chat-notice').textContent = '확장 프로그램 감지됨';
+                document.getElementById('ext-overlay').style.display = 'none';
+            }
+        }, 1500);
+
+        function closeExtOverlay() {
+            document.getElementById('ext-overlay').style.display = 'none';
+            localStorage.setItem('multiview_seen_ext', 'true');
+        }
+
+        function showRefreshOverlay() {
+            const text = document.getElementById('ext-overlay-text');
+            const btn = document.getElementById('ext-overlay-btn');
+            text.textContent = '로그인 후 채팅을 새로고침 해주세요.';
+            btn.textContent = '새로고침';
+            document.getElementById('ext-overlay').style.display = 'flex';
+        }
+
+        function handleExtBtn() {
+            const btn = document.getElementById('ext-overlay-btn');
+            if (btn.textContent === '새로고침') {
+                const chatFrame = document.getElementById('chat-frame');
+                const sel = document.getElementById('chat-select');
+                chatFrame.src = sel.value;
+            } else {
+                window.open(extensionUrl);
+            }
+            closeExtOverlay();
+        }
+
+        // Show extension notice on first visit if no extension
+        if (!hasExtension && localStorage.getItem('multiview_seen_ext') !== 'true') {
+            document.getElementById('ext-overlay').style.display = 'flex';
+        }
+
+        // Handle chzzk login CSP violation
+        document.addEventListener('securitypolicyviolation', (e) => {
+            if (e.blockedURI === 'https://nid.naver.com') {
+                window.open('https://nid.naver.com/nidlogin.login');
+                showRefreshOverlay();
+            }
+        });
+
+        // Update notice based on extension
+        if (hasExtension) {
+            document.getElementById('chat-notice').textContent = '확장 프로그램 감지됨';
+        }
+
+        // State
+        let initChat = true; // 원본과 동일: 첫 PonReady 때 채팅 로드
+        let channels = []; // [{id, platform, nickname}]
+        let favorites = JSON.parse(localStorage.getItem('multiview_favorites') || '[]');
+        let presets = JSON.parse(localStorage.getItem('multiview_presets') || '[]');
+        let sidebarOpen = true;
+        let panelOpen = true;
+        let dragIdx = -1;
+
+        // Platform detection
+        function detectPlatform(id) {
+            return /^[0-9a-f]{20,}$/.test(id) ? 'chzzk' : 'soop';
+        }
+
+        function getStreamUrl(id, platform) {
+            return platform === 'chzzk'
+                ? `https://chzzk.naver.com/live/${id}`
+                : `https://play.sooplive.com/${id}/direct?fromApi=1`;
+        }
+
+        function getChatUrl(id, platform) {
+            return platform === 'chzzk'
+                ? `https://chzzk.naver.com/live/${id}/chat`
+                : `https://play.sooplive.com/${id}?vtype=chat`;
+        }
+
+        // Parse input
+        function parseIds(str) {
+            return str.split(/[\s,\/]+/).map(s => s.trim()).filter(Boolean);
+        }
+
+        // Add channels
+        function addChannels(ids) {
+            let added = false;
+            for (const id of ids) {
+                if (channels.find(c => c.id === id)) continue;
+                const platform = detectPlatform(id);
+                channels.push({ id, platform, nickname: id });
+                added = true;
+            }
+            if (added) render();
+        }
+
+        function addFromInput(inputId) {
+            const input = document.getElementById(inputId);
+            const ids = parseIds(input.value);
+            if (ids.length) {
+                addChannels(ids);
+                input.value = '';
+            }
+        }
+
+        function removeChannel(idx) {
+            channels.splice(idx, 1);
+            render();
+        }
+
+        function resetAll() {
+            channels = [];
+            render();
+        }
+
+        // Promote sub to main
+        function promoteToMain(idx) {
+            if (idx <= 0 || idx >= channels.length) return;
+            const [ch] = channels.splice(idx, 1);
+            channels.unshift(ch);
+            render();
+        }
+
+        // Swap channels
+        function swapChannels(a, b) {
+            if (a === b) return;
+            [channels[a], channels[b]] = [channels[b], channels[a]];
+            render();
+        }
+
+        // Favorites
+        function toggleFavorite(id) {
+            const ch = channels.find(c => c.id === id);
+            const existing = favorites.findIndex(f => f.id === id);
+            if (existing >= 0) {
+                favorites.splice(existing, 1);
+            } else {
+                const platform = ch ? ch.platform : detectPlatform(id);
+                const nickname = ch ? ch.nickname : id;
+                favorites.push({ id, platform, nickname });
+            }
+            localStorage.setItem('multiview_favorites', JSON.stringify(favorites));
+            renderSidebar();
+            renderEmptyState();
+        }
+
+        function isFav(id) {
+            return favorites.some(f => f.id === id);
+        }
+
+        function removeFavorite(id) {
+            favorites = favorites.filter(f => f.id !== id);
+            localStorage.setItem('multiview_favorites', JSON.stringify(favorites));
+            renderSidebar();
+            renderEmptyState();
+        }
+
+        // Presets
+        function savePreset() {
+            const nameInput = document.getElementById('preset-name-input');
+            const name = nameInput.value.trim();
+            if (!name || !channels.length) return;
+            presets.push({ name, channels: channels.map(c => ({ id: c.id, platform: c.platform, nickname: c.nickname })) });
+            localStorage.setItem('multiview_presets', JSON.stringify(presets));
+            nameInput.value = '';
+            renderSidebar();
+            renderEmptyState();
+        }
+
+        function loadPreset(idx) {
+            const p = presets[idx];
+            if (!p) return;
+            channels = p.channels.map(c => ({ ...c }));
+            render();
+        }
+
+        function deletePreset(idx) {
+            presets.splice(idx, 1);
+            localStorage.setItem('multiview_presets', JSON.stringify(presets));
+            renderSidebar();
+            renderEmptyState();
+        }
+
+        // Sidebar / Panel toggles
+        function toggleSidebar() {
+            sidebarOpen = !sidebarOpen;
+            document.getElementById('sidebar').classList.toggle('collapsed', !sidebarOpen);
+            adjustLayout();
+        }
+
+        function togglePanel() {
+            panelOpen = !panelOpen;
+            document.getElementById('channel-panel').classList.toggle('collapsed-panel', !panelOpen);
+            document.getElementById('panel-toggle-btn').textContent = panelOpen ? '▲' : '▼';
+        }
+
+        // Chat
+        function switchChat(url) {
+            document.getElementById('chat-frame').src = url;
+        }
+
+        function updateChatSelect() {
+            const sel = document.getElementById('chat-select');
+            const prev = sel.value;
+            sel.innerHTML = '';
+            for (const ch of channels) {
+                const opt = document.createElement('option');
+                opt.value = getChatUrl(ch.id, ch.platform);
+                opt.textContent = ch.nickname;
+                sel.appendChild(opt);
+            }
+            const hideOpt = document.createElement('option');
+            hideOpt.value = 'about:blank';
+            hideOpt.textContent = '(채팅 숨기기)';
+            sel.appendChild(hideOpt);
+
+            // Restore previous selection if possible
+            if ([...sel.options].some(o => o.value === prev)) {
+                sel.value = prev;
+            } else if (channels.length) {
+                sel.value = sel.options[0].value;
+            } else {
+                sel.value = 'about:blank';
+            }
+            switchChat(sel.value);
+        }
+
+        // Drag and drop
+        function handleMainDrop(e) {
+            e.preventDefault();
+            const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+            if (isNaN(fromIdx) || fromIdx <= 0) return;
+            promoteToMain(fromIdx);
+        }
+
+        // Layout
+        function adjustLayout() {
+            const mainEl = document.getElementById('main-stream');
+            const subEl = document.getElementById('sub-streams');
+
+            if (!channels.length) return;
+
+            const sidebarW = sidebarOpen ? 350 : 0;
+            const totalW = window.innerWidth - sidebarW;
+            const totalH = window.innerHeight;
+            const subCount = channels.length - 1;
+
+            if (subCount === 0) {
+                // Single channel: full screen
+                mainEl.style.height = totalH + 'px';
+                subEl.style.display = 'none';
+                return;
+            }
+
+            subEl.style.display = 'flex';
+
+            // Calculate optimal split
+            const subW = totalW / subCount;
+            const subH = subW * 9 / 16;
+            const maxSubH = totalH * 0.35;
+            const actualSubH = Math.min(subH, maxSubH);
+            const mainH = totalH - actualSubH;
+
+            mainEl.style.height = mainH + 'px';
+            subEl.style.height = actualSubH + 'px';
+        }
+
+        // Render
+        function render() {
+            const emptyState = document.getElementById('empty-state');
+            const mainEl = document.getElementById('main-stream');
+            const subEl = document.getElementById('sub-streams');
+            const topBar = document.getElementById('top-bar');
+
+            if (!channels.length) {
+                emptyState.style.display = 'flex';
+                mainEl.style.display = 'none';
+                subEl.style.display = 'none';
+                topBar.style.display = 'none';
+                mainEl.innerHTML = '';
+                subEl.innerHTML = '';
+                renderEmptyState();
+                renderSidebar();
+                updateChatSelect();
+                return;
+            }
+
+            emptyState.style.display = 'none';
+            mainEl.style.display = 'block';
+            topBar.style.display = 'flex';
+
+            // Main
+            const mainCh = channels[0];
+            const currentMainSrc = mainEl.querySelector('iframe')?.getAttribute('data-id');
+            if (currentMainSrc !== mainCh.id) {
+                mainEl.innerHTML = `<iframe src="${getStreamUrl(mainCh.id, mainCh.platform)}" name="${mainCh.id}" allowfullscreen data-id="${mainCh.id}"></iframe>`;
+            }
+
+            // Subs
+            const subChannels = channels.slice(1);
+            const existingSubs = subEl.querySelectorAll('.sub-slot');
+            const existingIds = [...existingSubs].map(s => s.getAttribute('data-id'));
+            const newIds = subChannels.map(c => c.id);
+
+            if (JSON.stringify(existingIds) !== JSON.stringify(newIds)) {
+                subEl.innerHTML = '';
+                subChannels.forEach((ch, i) => {
+                    const globalIdx = i + 1;
+                    const slot = document.createElement('div');
+                    slot.className = 'sub-slot';
+                    slot.setAttribute('data-id', ch.id);
+                    slot.setAttribute('data-idx', globalIdx);
+                    slot.draggable = true;
+                    slot.innerHTML = `
+                        <iframe src="${getStreamUrl(ch.id, ch.platform)}" name="${ch.id}" allowfullscreen data-id="${ch.id}"></iframe>
+                        <div class="sub-overlay" onclick="promoteToMain(${globalIdx})">
+                            <div class="sub-controls">
+                                <button onclick="event.stopPropagation(); removeChannel(${globalIdx})" title="제거">✕</button>
+                            </div>
+                        </div>
+                    `;
+
+                    // Drag events
+                    slot.addEventListener('dragstart', (e) => {
+                        dragIdx = globalIdx;
+                        e.dataTransfer.setData('text/plain', String(globalIdx));
+                        e.dataTransfer.effectAllowed = 'move';
+                        setTimeout(() => slot.classList.add('dragging'), 0);
+                    });
+                    slot.addEventListener('dragend', () => {
+                        slot.classList.remove('dragging');
+                        dragIdx = -1;
+                    });
+                    slot.addEventListener('dragover', (e) => {
+                        e.preventDefault();
+                        slot.classList.add('drag-over');
+                    });
+                    slot.addEventListener('dragleave', () => {
+                        slot.classList.remove('drag-over');
+                    });
+                    slot.addEventListener('drop', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        slot.classList.remove('drag-over');
+                        const fromIdx = parseInt(e.dataTransfer.getData('text/plain'));
+                        if (!isNaN(fromIdx)) swapChannels(fromIdx, globalIdx);
+                    });
+
+                    subEl.appendChild(slot);
+                });
+            }
+
+            adjustLayout();
+            renderSidebar();
+            updateChatSelect();
+        }
+
+        function renderSidebar() {
+            // Active channels
+            const activeEl = document.getElementById('active-channels');
+            activeEl.innerHTML = channels.map((ch, i) => `
+                <div class="channel-item">
+                    <span class="ch-name">${ch.nickname} <span class="platform-badge ${ch.platform}">${ch.platform === 'chzzk' ? 'CHZZK' : 'SOOP'}</span>${i === 0 ? ' <span style="color:var(--accent);font-size:11px;">메인</span>' : ''}</span>
+                    <span class="ch-star ${isFav(ch.id) ? 'active' : ''}" onclick="toggleFavorite('${ch.id}')" title="즐겨찾기">★</span>
+                    <span class="ch-remove" onclick="removeChannel(${i})" title="제거">✕</span>
+                </div>
+            `).join('');
+
+            // Favorites
+            const favEl = document.getElementById('fav-list');
+            if (favorites.length) {
+                favEl.innerHTML = favorites.map(f => `
+                    <div class="channel-item fav-item" onclick="addChannels(['${f.id}'])">
+                        <span class="ch-name">${f.nickname} <span class="platform-badge ${f.platform}">${f.platform === 'chzzk' ? 'CHZZK' : 'SOOP'}</span></span>
+                        <span class="ch-remove" onclick="event.stopPropagation(); removeFavorite('${f.id}')" title="삭제">✕</span>
+                    </div>
+                `).join('');
+            } else {
+                favEl.innerHTML = '<div style="font-size:12px;color:var(--text-dim);padding:2px 6px;">없음</div>';
+            }
+
+            // Presets
+            const presetEl = document.getElementById('preset-list');
+            if (presets.length) {
+                presetEl.innerHTML = presets.map((p, i) => `
+                    <div class="preset-item" onclick="loadPreset(${i})">
+                        <span class="preset-name">${p.name}</span>
+                        <span class="preset-channels">${p.channels.length}개</span>
+                        <span class="preset-del" onclick="event.stopPropagation(); deletePreset(${i})" title="삭제">✕</span>
+                    </div>
+                `).join('');
+            } else {
+                presetEl.innerHTML = '<div style="font-size:12px;color:var(--text-dim);padding:2px 6px;">없음</div>';
+            }
+        }
+
+        function renderEmptyState() {
+            const favSection = document.getElementById('empty-favs');
+            const presetSection = document.getElementById('empty-presets');
+
+            if (favorites.length) {
+                favSection.innerHTML = `<h3>즐겨찾기</h3><div class="tag-list">${favorites.map(f => `
+                    <div class="tag" onclick="addChannels(['${f.id}'])">
+                        ${f.nickname} <span class="platform-badge ${f.platform}">${f.platform === 'chzzk' ? 'CHZZK' : 'SOOP'}</span>
+                    </div>
+                `).join('')}</div>`;
+            } else {
+                favSection.innerHTML = '';
+            }
+
+            if (presets.length) {
+                presetSection.innerHTML = `<h3>프리셋</h3><div class="tag-list">${presets.map((p, i) => `
+                    <div class="tag" onclick="loadPreset(${i})">
+                        ${p.name} <span style="color:var(--text-dim);font-size:11px;">(${p.channels.length}개)</span>
+                        <span class="tag-remove" onclick="event.stopPropagation(); deletePreset(${i})">✕</span>
+                    </div>
+                `).join('')}</div>`;
+            } else {
+                presetSection.innerHTML = '';
+            }
+        }
+
+        // SOOP postMessage handling
+        window.addEventListener('message', (e) => {
+            if (e.origin !== 'https://play.sooplive.com') return;
+            const iframes = document.querySelectorAll('#main-stream iframe, #sub-streams iframe');
+            const source = [...iframes].find(f => {
+                try { return e.source === f.contentWindow; } catch { return false; }
+            });
+            if (!source) return;
+            const id = source.getAttribute('data-id');
+
+            switch (e.data?.cmd) {
+                case 'PonReady':
+                    // 첫 번째 PonReady에서 채팅 iframe 로드 (원본 동작)
+                    if (initChat && hasExtension) {
+                        initChat = false;
+                        const sel = document.getElementById('chat-select');
+                        if (sel.options.length && sel.value !== 'about:blank') {
+                            document.getElementById('chat-frame').src = sel.value;
+                        }
+                    }
+                    e.source.postMessage({
+                        cmd: 'Pload',
+                        id: id,
+                        mutePlay: false,
+                        showChat: hasExtension,
+                        autoPlay: true,
+                        isAdShow: true,
+                        showQualityBox: true,
+                        fromApi: '1',
+                    }, 'https://play.sooplive.com');
+                    break;
+                case 'PupdateBroadInfo':
+                    const ch = channels.find(c => c.id === id);
+                    if (ch && e.data.data?.nick) {
+                        ch.nickname = e.data.data.nick;
+                        // Update favorite nickname too
+                        const fav = favorites.find(f => f.id === id);
+                        if (fav) {
+                            fav.nickname = e.data.data.nick;
+                            localStorage.setItem('multiview_favorites', JSON.stringify(favorites));
+                        }
+                        renderSidebar();
+                        updateChatSelect();
+                    }
+                    break;
+                case 'showRefreshOverlay':
+                    showRefreshOverlay();
+                    break;
+            }
+        });
+
+        // Key events
+        document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+            if (e.key === 'Escape') {
+                resetAll();
+            }
+        });
+
+        // Resize
+        window.addEventListener('resize', adjustLayout);
+
+        // Enter key on inputs
+        document.getElementById('top-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') addFromInput('top-input');
+        });
+        document.getElementById('empty-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') addFromInput('empty-input');
+        });
+
+        // Init
+        renderEmptyState();
+        renderSidebar();
+    </script>
+</body>
+</html>
