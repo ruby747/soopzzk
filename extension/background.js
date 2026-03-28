@@ -61,6 +61,17 @@ const setPartitionedCookie = async (cookie, url, partitionKey) => {
 chrome.runtime.onInstalled.addListener(init);
 chrome.runtime.onStartup.addListener(init);
 
+// Content script에서 채널 정보 요청 처리
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'fetchChzzkChannel') {
+    fetch(`https://api.chzzk.naver.com/service/v1/channels/${msg.channelId}`)
+      .then(res => res.json())
+      .then(data => sendResponse({ name: data.content?.channelName || null }))
+      .catch(() => sendResponse({ name: null }));
+    return true; // 비동기 응답
+  }
+});
+
 // 로그인/로그아웃 시 실시간 쿠키 동기화
 chrome.cookies.onChanged.addListener(async ({ cookie, removed }) => {
   if (removed) return;

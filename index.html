@@ -189,9 +189,9 @@
 
             <div id="chat-section">
                 <select id="chat-select" onchange="switchChat(this.value)">
-                    <option value="about:blank">(채팅 선택)</option>
+                    <option value="" data-blank>(채팅 선택)</option>
                 </select>
-                <iframe id="chat-frame" src="about:blank"></iframe>
+                <iframe id="chat-frame"></iframe>
                 <div id="chat-notice">확장 프로그램 미설치 시 읽기 전용</div>
             </div>
         </div>
@@ -285,25 +285,32 @@
             return str.split(/[\s,\/]+/).map(s => s.trim()).filter(Boolean);
         }
 
-        // 닉네임 가져오기
-        async function fetchNickname(id, platform) {
+        // 확장 프로그램 감지
+        const hasExtInstalled = document.documentElement.hasAttribute('soopzzk-ext');
+
+        // 치지직: 확장 프로그램 경유로 채널명 조회 (CORS 우회)
+        function fetchChzzkNickname(id) {
+            window.postMessage({ type: 'soopzzk-fetch-chzzk', channelId: id }, '*');
+        }
+
+        // 확장 프로그램으로부터 결과 수신
+        window.addEventListener('message', (e) => {
+            if (e.source !== window) return;
+            if (e.data?.type === 'soopzzk-chzzk-result' && e.data.name) {
+                updateNickname(e.data.channelId, e.data.name);
+            }
+        });
+
+        // 숲: station API로 닉네임 조회
+        async function fetchSoopNickname(id) {
             try {
-                if (platform === 'chzzk') {
-                    const res = await fetch(`https://api.chzzk.naver.com/service/v1/channels/${id}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        return data.content?.channelName || null;
-                    }
-                } else {
-                    // 숲: station API로 닉네임 조회
-                    const res = await fetch(`https://chapi.sooplive.com/api/${id}/station`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        return data.station?.user_nick || null;
-                    }
+                const res = await fetch(`https://chapi.sooplive.com/api/${id}/station`);
+                if (res.ok) {
+                    const data = await res.json();
+                    return data.station?.user_nick || null;
                 }
             } catch (e) {
-                // CORS 등으로 실패하면 무시 (숲은 postMessage로 대체됨)
+                // CORS 실패 시 postMessage로 대체됨
             }
             return null;
         }
@@ -337,9 +344,13 @@
                 channels.push({ id, platform, nickname: id });
                 added = true;
                 // 닉네임 비동기 조회
-                fetchNickname(id, platform).then(nick => {
-                    if (nick) updateNickname(id, nick);
-                });
+                if (platform === 'chzzk') {
+                    fetchChzzkNickname(id); // 확장 프로그램 경유
+                } else {
+                    fetchSoopNickname(id).then(nick => {
+                        if (nick) updateNickname(id, nick);
+                    });
+                }
             }
             if (added) render();
         }
@@ -445,6 +456,8 @@
         }
 
         // Chat
+        const BLANK_PAGE = 'data:text/html,<style>body{margin:0;background:%23111;background-image:linear-gradient(45deg,%23191919 25%25,transparent 25%25,transparent 75%25,%23191919 75%25),linear-gradient(45deg,%23191919 25%25,transparent 25%25,transparent 75%25,%23191919 75%25);background-size:20px 20px;background-position:0 0,10px 10px;}</style>';
+
         function switchChat(url) {
             document.getElementById('chat-frame').src = url;
         }
@@ -460,7 +473,7 @@
                 sel.appendChild(opt);
             }
             const hideOpt = document.createElement('option');
-            hideOpt.value = 'about:blank';
+            hideOpt.value = BLANK_PAGE;
             hideOpt.textContent = '(채팅 숨기기)';
             sel.appendChild(hideOpt);
 
@@ -470,7 +483,7 @@
             } else if (channels.length) {
                 sel.value = sel.options[0].value;
             } else {
-                sel.value = 'about:blank';
+                sel.value = BLANK_PAGE;
             }
             switchChat(sel.value);
         }
@@ -630,12 +643,21 @@
             updateChatSelect();
         }
 
+        function editNickname(id) {
+            const ch = channels.find(c => c.id === id);
+            if (!ch) return;
+            const input = prompt('닉네임 입력:', ch.nickname);
+            if (input !== null && input.trim()) {
+                updateNickname(id, input.trim());
+            }
+        }
+
         function renderSidebar() {
             // Active channels
             const activeEl = document.getElementById('active-channels');
             activeEl.innerHTML = channels.map((ch, i) => `
                 <div class="channel-item">
-                    <span class="ch-name">${ch.nickname} <span class="platform-badge ${ch.platform}">${ch.platform === 'chzzk' ? 'CHZZK' : 'SOOP'}</span>${i === 0 ? ' <span style="color:var(--accent);font-size:11px;">메인</span>' : ''}</span>
+                    <span class="ch-name" onclick="editNickname('${ch.id}')" title="클릭하여 닉네임 수정" style="cursor:pointer;">${ch.nickname} <span class="platform-badge ${ch.platform}">${ch.platform === 'chzzk' ? 'CHZZK' : 'SOOP'}</span>${i === 0 ? ' <span style="color:var(--accent);font-size:11px;">메인</span>' : ''}</span>
                     <span class="ch-star ${isFav(ch.id) ? 'active' : ''}" onclick="toggleFavorite('${ch.id}')" title="즐겨찾기">★</span>
                     <span class="ch-remove" onclick="removeChannel(${i})" title="제거">✕</span>
                 </div>
@@ -711,7 +733,7 @@
                     if (initChat && hasExtension) {
                         initChat = false;
                         const sel = document.getElementById('chat-select');
-                        if (sel.options.length && sel.value !== 'about:blank') {
+                        if (sel.options.length && sel.value !== BLANK_PAGE) {
                             document.getElementById('chat-frame').src = sel.value;
                         }
                     }
@@ -757,6 +779,7 @@
         });
 
         // Init
+        document.getElementById('chat-frame').src = BLANK_PAGE;
         renderEmptyState();
         renderSidebar();
     </script>
